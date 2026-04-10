@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -367,9 +368,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
-	if newAPIError != nil {
-		return newAPIError
+	key := ""
+	index := 0
+	if len(channel.Keys) > 0 && !channel.ChannelInfo.IsMultiKey {
+		nextKey, err := relay.GetNextAvailableKey(channel)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeChannelNoAvailableKey)
+		}
+		key = nextKey
+	} else {
+		selectedKey, selectedIndex, newAPIError := channel.GetNextEnabledKey()
+		if newAPIError != nil {
+			return newAPIError
+		}
+		key = selectedKey
+		index = selectedIndex
 	}
 	if channel.ChannelInfo.IsMultiKey {
 		common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)

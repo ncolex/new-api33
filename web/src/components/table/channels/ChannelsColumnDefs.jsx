@@ -327,6 +327,7 @@ export const getChannelsColumns = ({
   setCurrentMultiKeyChannel,
   openUpstreamUpdateModal,
   detectChannelUpstreamUpdates,
+  poolStatusMap,
 }) => {
   return [
     {
@@ -514,6 +515,43 @@ export const getChannelsColumns = ({
         } else {
           return renderStatus(text, record.channel_info, t);
         }
+      },
+    },
+    {
+      key: COLUMN_KEYS.POOL_KEYS,
+      title: t('Pool de Keys'),
+      dataIndex: 'id',
+      render: (id, record) => {
+        if (record.children !== undefined) return '-';
+        const status = poolStatusMap?.[id];
+        if (!status) {
+          return record?.key ? (
+            <Tag color='grey' type='light'>
+              1 key (legacy)
+            </Tag>
+          ) : (
+            '-'
+          );
+        }
+        if (status.total_keys <= 1 && record?.key) {
+          return (
+            <Tag color='grey' type='light'>
+              1 key (legacy)
+            </Tag>
+          );
+        }
+        return (
+          <Space spacing={6}>
+            <Tag color='green' type='light'>
+              {(status.active_keys || 0) + ' activas'}
+            </Tag>
+            {(status.cooldown_keys || 0) > 0 && (
+              <Tag color='orange' type='light'>
+                {(status.cooldown_keys || 0) + ' en cooldown'}
+              </Tag>
+            )}
+          </Space>
+        );
       },
     },
     {

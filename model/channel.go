@@ -48,13 +48,16 @@ type Channel struct {
 	ParamOverride     *string `json:"param_override" gorm:"type:text"`
 	HeaderOverride    *string `json:"header_override" gorm:"type:text"`
 	Remark            *string `json:"remark" gorm:"type:varchar(255)" validate:"max=255"`
+	IsFallback        bool    `json:"is_fallback" gorm:"column:is_fallback;default:false"`
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
 	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
 
-	// cache info
-	Keys []string `json:"-" gorm:"-"`
+	Keys          []string `json:"keys" gorm:"-"`
+	KeysRaw       string   `json:"keys_raw" gorm:"column:keys_raw;type:text"`
+	RotationIndex int32    `json:"rotation_index" gorm:"-"`
+	CooldownKeys  sync.Map `json:"-" gorm:"-"`
 }
 
 type ChannelInfo struct {
@@ -79,11 +82,11 @@ func (c *ChannelInfo) Scan(value interface{}) error {
 }
 
 func (channel *Channel) GetKeys() []string {
-	if channel.Key == "" {
-		return []string{}
-	}
 	if len(channel.Keys) > 0 {
 		return channel.Keys
+	}
+	if channel.Key == "" {
+		return []string{}
 	}
 	trimmed := strings.TrimSpace(channel.Key)
 	// If the key starts with '[', try to parse it as a JSON array (e.g., for Vertex AI scenarios)
@@ -223,12 +226,48 @@ func (channel *Channel) GetOtherInfo() map[string]interface{} {
 }
 
 func (channel *Channel) SetOtherInfo(otherInfo map[string]interface{}) {
-	otherInfoBytes, err := json.Marshal(otherInfo)
+	otherInfoBytes, err := common.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
 		return
 	}
 	channel.OtherInfo = string(otherInfoBytes)
+}
+
+func (channel *Channel) BeforeSave(tx *gorm.DB) error {
+	if channel.Keys == nil {
+		if strings.TrimSpace(channel.KeysRaw) == "" {
+			channel.KeysRaw = "[]"
+		}
+		return nil
+	}
+	keys := channel.Keys
+	keysBytes, err := common.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	channel.KeysRaw = string(keysBytes)
+	return nil
+}
+
+func (channel *Channel) AfterFind(tx *gorm.DB) error {
+	channel.Keys = []string{}
+	trimmedRaw := strings.TrimSpace(channel.KeysRaw)
+	if trimmedRaw != "" {
+		var keys []string
+		if err := common.Unmarshal([]byte(trimmedRaw), &keys); err == nil {
+			for _, key := range keys {
+				trimmedKey := strings.TrimSpace(key)
+				if trimmedKey != "" {
+					channel.Keys = append(channel.Keys, trimmedKey)
+				}
+			}
+		}
+	}
+	if len(channel.Keys) == 0 && strings.TrimSpace(channel.Key) != "" && !channel.ChannelInfo.IsMultiKey {
+		channel.Keys = []string{strings.TrimSpace(channel.Key)}
+	}
+	return nil
 }
 
 func (channel *Channel) GetTag() string {

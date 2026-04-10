@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
@@ -665,8 +666,16 @@ func AddChannel(c *gin.Context) {
 
 func DeleteChannel(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
+	originChannel, err := model.GetChannelById(id, true)
+	if err == nil && originChannel.IsFallback {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "fallback channel is read-only",
+		})
+		return
+	}
 	channel := model.Channel{Id: id}
-	err := channel.Delete()
+	err = channel.Delete()
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -861,6 +870,13 @@ func UpdateChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),
+		})
+		return
+	}
+	if originChannel.IsFallback {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "fallback channel is read-only",
 		})
 		return
 	}
@@ -1952,6 +1968,130 @@ func OllamaVersion(c *gin.Context) {
 		"success": true,
 		"data": gin.H{
 			"version": version,
+		},
+	})
+}
+
+type bulkKeysRequest struct {
+	Keys []string `json:"keys"`
+}
+
+func keyPrefix(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return "********..."
+	}
+	if len(trimmed) <= 8 {
+		return trimmed + "..."
+	}
+	return trimmed[:8] + "..."
+}
+
+// BulkUpdateChannelKeys POST /api/channel/:id/bulk-keys
+func BulkUpdateChannelKeys(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid channel id"})
+		return
+	}
+
+	var req bulkKeysRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid request body"})
+		return
+	}
+
+	channel, err := model.GetChannelById(channelID, true)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "channel not found"})
+		return
+	}
+
+	seen := make(map[string]struct{})
+	keys := make([]string, 0, len(req.Keys))
+	for _, key := range req.Keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		keys = append(keys, trimmed)
+	}
+	channel.Keys = keys
+	if len(keys) > 0 {
+		channel.Key = keys[0]
+	} else {
+		channel.Key = ""
+	}
+	if err = channel.Save(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "failed to update channel keys"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"total_keys": len(channel.Keys),
+		},
+	})
+}
+
+// GetChannelPoolStatus GET /api/channel/:id/pool-status
+func GetChannelPoolStatus(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid channel id"})
+		return
+	}
+	channel, err := model.CacheGetChannel(channelID)
+	if err != nil || channel == nil {
+		channel, err = model.GetChannelById(channelID, true)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "channel not found"})
+			return
+		}
+	}
+	keys := channel.Keys
+	if len(keys) == 0 && strings.TrimSpace(channel.Key) != "" {
+		keys = []string{strings.TrimSpace(channel.Key)}
+	}
+
+	keysDetail := make([]gin.H, 0, len(keys))
+	activeKeys := 0
+	cooldownKeys := 0
+	for _, key := range keys {
+		status := "active"
+		var expireAt *time.Time
+		if relay.IsKeyCoolingDown(channel, key) {
+			status = "cooldown"
+		}
+		if value, ok := channel.CooldownKeys.Load(key); ok {
+			if parsed, ok := value.(time.Time); ok && time.Now().Before(parsed) {
+				expireAt = &parsed
+			}
+		}
+		if status == "cooldown" {
+			cooldownKeys++
+		} else {
+			activeKeys++
+		}
+		keysDetail = append(keysDetail, gin.H{
+			"prefix":              keyPrefix(key),
+			"status":              status,
+			"cooldown_expires_at": expireAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"total_keys":    len(keys),
+			"active_keys":   activeKeys,
+			"cooldown_keys": cooldownKeys,
+			"keys_detail":   keysDetail,
 		},
 	})
 }
