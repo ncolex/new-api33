@@ -132,6 +132,7 @@ var GeminiSafetySetting string
 
 // https://docs.cohere.com/docs/safety-modes Type; NONE/CONTEXTUAL/STRICT
 var CohereSafetySetting string
+var KeyCooldownSeconds int
 
 const (
 	RequestIdKey = "X-Oneapi-Request-Id"

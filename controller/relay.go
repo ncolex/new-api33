@@ -208,15 +208,45 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		switch relayFormat {
-		case types.RelayFormatOpenAIRealtime:
-			newAPIError = relay.WssHelper(c, relayInfo)
-		case types.RelayFormatClaude:
-			newAPIError = relay.ClaudeHelper(c, relayInfo)
-		case types.RelayFormatGemini:
-			newAPIError = geminiRelayHandler(c, relayInfo)
-		default:
-			newAPIError = relayHandler(c, relayInfo)
+		const maxInChannelAttempts = 3
+		for inChannelAttempt := 1; inChannelAttempt <= maxInChannelAttempts; inChannelAttempt++ {
+			if inChannelAttempt > 1 {
+				nextKey, keyErr := relay.GetNextAvailableKey(channel)
+				if keyErr != nil {
+					if keyErr.Error() == "all_keys_in_cooldown" {
+						newAPIError = types.NewErrorWithStatusCode(errors.New("all_keys_in_cooldown"), types.ErrorCodeDoRequestFailed, http.StatusTooManyRequests)
+					} else {
+						newAPIError = types.NewError(keyErr, types.ErrorCodeChannelNoAvailableKey)
+					}
+					break
+				}
+				common.SetContextKey(c, constant.ContextKeyChannelKey, nextKey)
+				relayInfo.ApiKey = nextKey
+			}
+
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				newAPIError = relay.WssHelper(c, relayInfo)
+			case types.RelayFormatClaude:
+				newAPIError = relay.ClaudeHelper(c, relayInfo)
+			case types.RelayFormatGemini:
+				newAPIError = geminiRelayHandler(c, relayInfo)
+			default:
+				newAPIError = relayHandler(c, relayInfo)
+			}
+
+			if newAPIError == nil {
+				break
+			}
+			if newAPIError.StatusCode == http.StatusTooManyRequests {
+				currentKey := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
+				relay.SetKeyCooldown(channel, currentKey)
+				if inChannelAttempt < maxInChannelAttempts {
+					logger.LogInfo(c, fmt.Sprintf("429 recibido en canal %d, key rotada, reintentando...", channel.Id))
+					continue
+				}
+			}
+			break
 		}
 
 		if newAPIError == nil {

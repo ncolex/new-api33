@@ -84,6 +84,7 @@ import {
   IconBolt,
   IconSearch,
   IconChevronDown,
+  IconLock,
 } from '@douyinfe/semi-icons';
 
 const { Text, Title } = Typography;
@@ -164,6 +165,7 @@ const EditChannelModal = (props) => {
   const { t } = useTranslation();
   const channelId = props.editingChannel.id;
   const isEdit = channelId !== undefined;
+  const isFallbackChannel = !!props.editingChannel?.is_fallback;
   const [loading, setLoading] = useState(isEdit);
   const isMobile = useIsMobile();
   const handleCancel = () => {
@@ -173,6 +175,8 @@ const EditChannelModal = (props) => {
     name: '',
     type: 1,
     key: '',
+    keys: [],
+    pool_keys_text: '',
     openai_organization: '',
     max_input_tokens: 0,
     base_url: '',
@@ -361,6 +365,14 @@ const EditChannelModal = (props) => {
     }
   }, [inputs.param_override, t]);
   const [isIonetChannel, setIsIonetChannel] = useState(false);
+  const parsedPoolKeys = useMemo(() => {
+    const raw = inputs.pool_keys_text || '';
+    const pieces = raw
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return Array.from(new Set(pieces));
+  }, [inputs.pool_keys_text]);
   const [ionetMetadata, setIonetMetadata] = useState(null);
   const [codexOAuthModalVisible, setCodexOAuthModalVisible] = useState(false);
   const [codexCredentialRefreshing, setCodexCredentialRefreshing] =
@@ -953,6 +965,13 @@ const EditChannelModal = (props) => {
       }
 
       initialBaseUrlRef.current = data.base_url || '';
+      const existingPoolKeys = Array.isArray(data.keys)
+        ? data.keys
+            .map((item) => (item || '').trim())
+            .filter(Boolean)
+        : [];
+      data.keys = existingPoolKeys;
+      data.pool_keys_text = existingPoolKeys.join('\n');
       setInputs(data);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -1523,6 +1542,8 @@ const EditChannelModal = (props) => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
     let localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
+    localInputs.keys = parsedPoolKeys;
+    delete localInputs.pool_keys_text;
 
     if (localInputs.type === 57) {
       if (batch) {
@@ -2136,6 +2157,11 @@ const EditChannelModal = (props) => {
               <Tag color='blue' shape='circle'>
                 {isEdit ? t('编辑') : t('新建')}
               </Tag>
+              {isFallbackChannel && (
+                <Tag color='orange' shape='circle' prefixIcon={<IconLock />}>
+                  {t('Fallback 只读')}
+                </Tag>
+              )}
               <Title heading={4} className='m-0'>
                 {isEdit ? t('更新渠道信息') : t('创建新的渠道')}
               </Title>
@@ -2162,6 +2188,7 @@ const EditChannelModal = (props) => {
               theme='solid'
               onClick={() => formApiRef.current?.submitForm()}
               icon={<IconSave />}
+              disabled={isFallbackChannel}
             >
               {t('提交')}
             </Button>
@@ -2600,7 +2627,7 @@ const EditChannelModal = (props) => {
                       onSearch={(value) => setChannelSearchValue(value)}
                       renderOptionItem={renderChannelOption}
                       onChange={(value) => handleInputChange('type', value)}
-                      disabled={isIonetLocked}
+                      disabled={isIonetLocked || isFallbackChannel}
                     />
 
                     {inputs.type === 57 && (
@@ -2756,7 +2783,7 @@ const EditChannelModal = (props) => {
                           autosize
                           autoComplete='new-password'
                           onChange={(value) => handleInputChange('key', value)}
-                          disabled={isIonetLocked}
+                          disabled={isIonetLocked || isFallbackChannel}
                           extraText={
                             <div className='flex items-center gap-2 flex-wrap'>
                               {isEdit &&
@@ -2812,7 +2839,7 @@ const EditChannelModal = (props) => {
                               onChange={(value) =>
                                 handleInputChange('key', value)
                               }
-                              disabled={isIonetLocked}
+                              disabled={isIonetLocked || isFallbackChannel}
                               extraText={
                                 <div className='flex flex-col gap-2'>
                                   <Text type='tertiary' size='small'>
@@ -2829,7 +2856,7 @@ const EditChannelModal = (props) => {
                                       onClick={() =>
                                         setCodexOAuthModalVisible(true)
                                       }
-                                      disabled={isIonetLocked}
+                                      disabled={isIonetLocked || isFallbackChannel}
                                     >
                                       {t('Codex 授权')}
                                     </Button>
@@ -2840,7 +2867,7 @@ const EditChannelModal = (props) => {
                                         theme='outline'
                                         onClick={handleRefreshCodexCredential}
                                         loading={codexCredentialRefreshing}
-                                        disabled={isIonetLocked}
+                                        disabled={isIonetLocked || isFallbackChannel}
                                       >
                                         {t('刷新凭证')}
                                       </Button>
@@ -2850,7 +2877,7 @@ const EditChannelModal = (props) => {
                                       type='primary'
                                       theme='outline'
                                       onClick={() => formatJsonField('key')}
-                                      disabled={isIonetLocked}
+                                      disabled={isIonetLocked || isFallbackChannel}
                                     >
                                       {t('格式化')}
                                     </Button>
@@ -2860,7 +2887,7 @@ const EditChannelModal = (props) => {
                                         type='primary'
                                         theme='outline'
                                         onClick={handleShow2FAModal}
-                                        disabled={isIonetLocked}
+                                        disabled={isIonetLocked || isFallbackChannel}
                                       >
                                         {t('查看密钥')}
                                       </Button>
@@ -3104,6 +3131,19 @@ const EditChannelModal = (props) => {
                         }
                       />
                     )}
+                    <Form.TextArea
+                      field='pool_keys_text'
+                      label={t('Pool de API Keys (una por línea o separadas por coma)')}
+                      placeholder={t('key-1\\nkey-2, key-3')}
+                      autosize
+                      onChange={(value) => handleInputChange('pool_keys_text', value)}
+                      disabled={isFallbackChannel}
+                      extraText={
+                        <Tag color='green' type='light' size='small'>
+                          {t('{{count}} keys cargadas', { count: parsedPoolKeys.length })}
+                        </Tag>
+                      }
+                    />
                     {batch && multiToSingle && (
                       <>
                         <Form.Select
@@ -3259,7 +3299,7 @@ const EditChannelModal = (props) => {
                                 handleInputChange('base_url', value)
                               }
                               showClear
-                              disabled={isIonetLocked}
+                              disabled={isIonetLocked || isFallbackChannel}
                             />
                           </div>
                           <div>
@@ -3314,7 +3354,7 @@ const EditChannelModal = (props) => {
                                 handleInputChange('base_url', value)
                               }
                               showClear
-                              disabled={isIonetLocked}
+                              disabled={isIonetLocked || isFallbackChannel}
                             />
                           </div>
                         </>
@@ -3346,7 +3386,7 @@ const EditChannelModal = (props) => {
                                 handleInputChange('base_url', value)
                               }
                               showClear
-                              disabled={isIonetLocked}
+                              disabled={isIonetLocked || isFallbackChannel}
                               extraText={t(
                                 '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
                               )}
@@ -3366,7 +3406,7 @@ const EditChannelModal = (props) => {
                               handleInputChange('base_url', value)
                             }
                             showClear
-                            disabled={isIonetLocked}
+                            disabled={isIonetLocked || isFallbackChannel}
                           />
                         </div>
                       )}
@@ -3385,7 +3425,7 @@ const EditChannelModal = (props) => {
                               handleInputChange('base_url', value)
                             }
                             showClear
-                            disabled={isIonetLocked}
+                            disabled={isIonetLocked || isFallbackChannel}
                           />
                         </div>
                       )}
@@ -3417,7 +3457,7 @@ const EditChannelModal = (props) => {
                               },
                             ]}
                             defaultValue='https://ark.cn-beijing.volces.com'
-                            disabled={isIonetLocked}
+                            disabled={isIonetLocked || isFallbackChannel}
                           />
                         </div>
                       )}

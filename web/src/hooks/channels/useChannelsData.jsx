@@ -53,6 +53,7 @@ export const useChannelsData = () => {
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [channelCount, setChannelCount] = useState(0);
   const [groupOptions, setGroupOptions] = useState([]);
+  const [poolStatusMap, setPoolStatusMap] = useState({});
 
   // UI states
   const [showEdit, setShowEdit] = useState(false);
@@ -136,6 +137,7 @@ export const useChannelsData = () => {
     GROUP: 'group',
     TYPE: 'type',
     STATUS: 'status',
+    POOL_KEYS: 'pool_keys',
     RESPONSE_TIME: 'response_time',
     BALANCE: 'balance',
     PRIORITY: 'priority',
@@ -176,6 +178,7 @@ export const useChannelsData = () => {
       [COLUMN_KEYS.GROUP]: true,
       [COLUMN_KEYS.TYPE]: true,
       [COLUMN_KEYS.STATUS]: true,
+      [COLUMN_KEYS.POOL_KEYS]: true,
       [COLUMN_KEYS.RESPONSE_TIME]: true,
       [COLUMN_KEYS.BALANCE]: true,
       [COLUMN_KEYS.PRIORITY]: true,
@@ -436,6 +439,47 @@ export const useChannelsData = () => {
       );
     }
   };
+
+  const fetchPoolStatuses = async () => {
+    const flatChannels = channels.filter(
+      (item) => item && item.children === undefined && item.id,
+    );
+    if (flatChannels.length === 0) {
+      return;
+    }
+    const entries = await Promise.all(
+      flatChannels.map(async (channel) => {
+        try {
+          const res = await API.get(`/api/channel/${channel.id}/pool-status`);
+          const payload = res?.data;
+          if (payload?.success && payload?.data) {
+            return [channel.id, payload.data];
+          }
+        } catch (error) {
+          // ignore single channel failure
+        }
+        return null;
+      }),
+    );
+    const nextMap = {};
+    entries.forEach((entry) => {
+      if (entry) {
+        nextMap[entry[0]] = entry[1];
+      }
+    });
+    setPoolStatusMap(nextMap);
+  };
+
+  useEffect(() => {
+    fetchPoolStatuses();
+  }, [channels]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchPoolStatuses();
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [channels]);
 
   const upstreamUpdates = useChannelUpstreamUpdates({ t, refresh });
 
@@ -1168,6 +1212,7 @@ export const useChannelsData = () => {
     showColumnSelector,
     setShowColumnSelector,
     COLUMN_KEYS,
+    poolStatusMap,
 
     // Type tab states
     activeTypeKey,
